@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #eef2f5; color: #333; padding: 20px; }
+        
+        .container { max-width: 1000px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        @media(min-width: 768px) { .grid { grid-template-columns: 1fr 1fr; } }
+        
+        .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: #2c3e50; color: white; padding: 15px 20px; border-radius: 8px; }
+        h2, h3 { margin-bottom: 15px; }
+        
+        input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background: #3498db; color: white; border: none; padding: 12px; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #2980b9; }
+        button.btn-danger { background: #e74c3c; width: auto; padding: 8px 15px; }
+        
+        ul.inventory-list { list-style: none; max-height: 400px; overflow-y: auto; }
+        ul.inventory-list li { background: #f8f9fa; padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #eee; border-radius: 4px; }
+        
+        #dashboardSection { display: none; }
+        #loginSection { max-width: 400px; margin: 100px auto; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div id="loginSection" class="card">
+        <h2>Admin Login</h2>
+        <input type="email" id="email" placeholder="Admin Email">
+        <input type="password" id="password" placeholder="Password">
+        <button id="loginBtn">Secure Login</button>
+        <p id="errorMsg" style="color: red; margin-top: 10px;"></p>
+    </div>
+
+    <div id="dashboardSection" class="container">
+        <div class="header">
+            <h2>Admin Dashboard</h2>
+            <button id="logoutBtn" class="btn-danger">Logout</button>
+        </div>
+        
+        <div class="grid">
+            <div class="card">
+                <h3>Manage Inventory</h3>
+                <input type="text" id="newPartName" placeholder="Part / Service Name">
+                <input type="number" id="newPartPrice" placeholder="Price ($)">
+                <button id="addInventoryBtn">Add to Inventory</button>
+                <br><br>
+                <ul id="inventoryList" class="inventory-list"></ul>
+            </div>
+
+            <div class="card">
+                <h3>Shop Analytics</h3>
+                <button id="runReportsBtn">Run Performance Report</button>
+                <div id="reportOutput" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAJ9K9fQ0ThMB7aXB6qNHr3_yLUdqJgnCM",
+            authDomain: "my-chain-reaction-game.firebaseapp.com",
+            projectId: "my-chain-reaction-game",
+            storageBucket: "my-chain-reaction-game.appspot.com",
+            messagingSenderId: "32751418407",
+            appId: "1:32751418407:web:ff8244007ef2b099d56202"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- AUTHENTICATION LOGIC ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                const userDoc = await getDoc(doc(db, "users", user.uid));
+                if (userDoc.exists() && userDoc.data().role === 'admin') {
+                    document.getElementById('loginSection').style.display = 'none';
+                    document.getElementById('dashboardSection').style.display = 'block';
+                    document.getElementById('errorMsg').innerText = "";
+                    loadInventory();
+                } else {
+                    // Show error but do NOT sign out, protecting the mechanic tab
+                    document.getElementById('errorMsg').innerText = "Access Denied. You are a mechanic. Please use the Mechanic Portal.";
+                    document.getElementById('loginSection').style.display = 'block';
+                    document.getElementById('dashboardSection').style.display = 'none';
+                }
+            } else {
+                document.getElementById('loginSection').style.display = 'block';
+                document.getElementById('dashboardSection').style.display = 'none';
+                document.getElementById('errorMsg').innerText = "";
+            }
+        });
+
+        document.getElementById('loginBtn').addEventListener('click', async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            if(!email || !password) return alert("Please enter credentials.");
+            try { await signInWithEmailAndPassword(auth, email, password); } 
+            catch (error) { document.getElementById('errorMsg').innerText = "Invalid credentials."; }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
+
+        // --- INVENTORY LOGIC ---
+        document.getElementById('addInventoryBtn').addEventListener('click', async () => {
+            const name = document.getElementById('newPartName').value;
+            const price = parseFloat(document.getElementById('newPartPrice').value);
+            if(name && !isNaN(price)) {
+                await addDoc(collection(db, "inventory"), { name, price });
+                document.getElementById('newPartName').value = '';
+                document.getElementById('newPartPrice').value = '';
+                loadInventory(); 
+            } else {
+                alert("Please enter a valid part name and price.");
+            }
+        });
+
+        async function loadInventory() {
+            const list = document.getElementById('inventoryList');
+            list.innerHTML = "";
+            const snapshot = await getDocs(collection(db, "inventory"));
+            snapshot.forEach((d) => {
+                let p = d.data();
+                list.innerHTML += `
+                    <li>
+                        <span><strong>${p.name}</strong> - $${p.price.toFixed(2)}</span> 
+                        <div>
+                            <button onclick="editPart('${d.id}')" style="background: #f39c12; width: auto; padding: 6px 12px; margin-right: 5px;">Edit</button>
+                            <button onclick="deletePart('${d.id}')" class="btn-danger">Delete</button>
+                        </div>
+                    </li>`;
+            });
+        }
+
+        window.editPart = async function(docId) {
+            const newPrice = prompt("Enter new price (numbers only):");
+            if(newPrice && !isNaN(newPrice)) {
+                await updateDoc(doc(db, "inventory", docId), { price: parseFloat(newPrice) });
+                loadInventory();
+            }
+        }
+
+        window.deletePart = async function(docId) {
+            if(confirm("Are you sure you want to permanently delete this part?")) {
+                await deleteDoc(doc(db, "inventory", docId));
+                loadInventory();
+            }
+        }
+
+        // --- ANALYTICS LOGIC ---
+        document.getElementById('runReportsBtn').addEventListener('click', async () => {
+            document.getElementById('runReportsBtn').innerText = "Calculating...";
+            const snapshot = await getDocs(collection(db, "bills"));
+            let total = 0; let users = {};
+            snapshot.forEach((d) => {
+                let b = d.data(); total += b.total;
+                users[b.workerEmail] = (users[b.workerEmail] || 0) + b.total;
+            });
+            let html = `<div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #2ecc71; border-radius: 4px;">`;
+            html += `<p style="font-size: 1.1em; margin-bottom: 10px;"><strong>Total Revenue: $${total.toFixed(2)}</strong></p><hr style="margin: 10px 0;"><ol style="padding-left: 20px;">`;
+            Object.entries(users).sort((a,b)=>b[1]-a[1]).forEach(u => html += `<li style="margin-bottom: 5px;">${u[0]}: <strong>$${u[1].toFixed(2)}</strong></li>`);
+            html += `</ol></div>`;
+            document.getElementById('reportOutput').innerHTML = html;
+            document.getElementById('runReportsBtn').innerText = "Run Performance Report";
+        });
+    </script>
+</body>
+</html>
